@@ -3,3 +3,7 @@ services:
     bot:
         build: .
         restart: unless-stopped
+        volumes:
+            - bot-database:/home/bettercbot/database.sql
+volumes:
+    bot-database:
