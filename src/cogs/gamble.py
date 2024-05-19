@@ -8,11 +8,46 @@ from discord.ext.commands import Context
 from discord import Member
 
 from src import config as conf
+from src.util.db import Database
+
+class Users:
+    """ Helper class for managing the `users` table in the database. """
+    def __init__(self, db: Database):
+        self.db = db
+    
+    def get_field(self, field_name: str, user_id: int):
+        cursor = self.db.cursor.execute(f"SELECT {field_name} FROM users WHERE id = ?", [user_id])
+        return cursor.fetchone()[0]
+    
+    def get_leaderboard(self, max_entries: int):
+        cursor = self.db.cursor.execute(f"SELECT id, money FROM users ORDER BY money DESC LIMIT ?", [max_entries])
+        return cursor.fetchall()
+    
+    def set_field(self, field_name: str, value, user_id: int, commit_changes: bool = True, add_value_instead: bool = False):
+        self.db.cursor.execute(f"UPDATE users SET {field_name} = {(field_name + ' +') if add_value_instead else ''} ? WHERE id = ?", [value, user_id])
+        if commit_changes:
+            self.db.connection.commit()
+
+    def check_user(self, user_id: int):
+        """
+        NOTE: This function only checks if a user ID exists in the database, not if the user ID belongs to a valid server member.
+        """
+        # Query number of times user id is found which should be 0 or 1.
+        cursor = self.db.cursor.execute("SELECT COUNT(*) FROM users WHERE id = ?", [user_id])
+        count = cursor.fetchone()[0]
+
+        # If no user ID was found in database, add user.
+        if count == 0:
+            self.db.cursor.execute("INSERT INTO users VALUES (?, 0, 0)", [user_id])
+            self.db.connection.commit()
+        elif count > 1:
+            raise Exception(f"Found multiple copies of user ID ({user_id}) in database.")
 
 class Gamble(commands.Cog, name="Gamble"):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.db
+        self.users = Users(self.db)
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: Context, error):
@@ -31,13 +66,13 @@ class Gamble(commands.Cog, name="Gamble"):
         """
         Place a bet (50/50). Enter the amount to bet.
         """
-        self.db.check_user(ctx.author.id)
+        self.users.check_user(ctx.author.id)
 
         if amount_to_bet == None:
             await ctx.send("You need to enter the amount to bet.", ephemeral=True)
             return
     
-        amount_in_wallet = self.db.get_user_field("money", ctx.author.id)
+        amount_in_wallet = self.users.get_field("money", ctx.author.id)
 
         if amount_to_bet <= 0:
             await ctx.send("You must enter a positive number greater than 0.", ephemeral=True)
@@ -50,7 +85,7 @@ class Gamble(commands.Cog, name="Gamble"):
 
         # Update wallet.
         amount_result = amount_in_wallet + (amount_to_bet if won else -amount_to_bet)
-        self.db.set_user_field("money", amount_result, ctx.author.id)
+        self.users.set_field("money", amount_result, ctx.author.id)
 
         if won:
             embed = discord.Embed(title="You won!", color=discord.Color.green())
@@ -69,13 +104,13 @@ class Gamble(commands.Cog, name="Gamble"):
         if user is None:
             user = ctx.author
 
-        self.db.check_user(user.id)
+        self.users.check_user(user.id)
 
         sticker_url = f"https://cdn.discordapp.com/stickers/{conf.wallet_sticker_id}.png"
 
         embed = discord.Embed(title=f"{user.display_name}'s wallet", color=discord.Color.blurple())
         embed.set_thumbnail(url=sticker_url)
-        embed.add_field(name="Money", value=f"${self.db.get_user_field('money', user.id)}")
+        embed.add_field(name="Money", value=f"${self.users.get_field('money', user.id)}")
 
         await ctx.send(embed=embed)
     
@@ -84,9 +119,9 @@ class Gamble(commands.Cog, name="Gamble"):
         """
         Get a small amount of money, works once per day.
         """
-        self.db.check_user(ctx.author.id)
+        self.users.check_user(ctx.author.id)
 
-        last_daily_timestamp = int(self.db.get_user_field("last_daily_timestamp", ctx.author.id))
+        last_daily_timestamp = int(self.users.get_field("last_daily_timestamp", ctx.author.id))
         current_timestamp = int(time.time())
         seconds_in_a_day = 86400
         seconds_since_last_daily = current_timestamp - last_daily_timestamp
@@ -98,8 +133,8 @@ class Gamble(commands.Cog, name="Gamble"):
             return
         
         # Update timestamp and add money to user"s wallet.
-        self.db.set_user_field("last_daily_timestamp", current_timestamp, ctx.author.id, commit_changes=False)
-        self.db.set_user_field("money", conf.daily_amount, ctx.author.id, commit_changes=True, add_value_instead=True)
+        self.users.set_field("last_daily_timestamp", current_timestamp, ctx.author.id, commit_changes=False)
+        self.users.set_field("money", conf.daily_amount, ctx.author.id, commit_changes=True, add_value_instead=True)
 
         await ctx.send(f"{ctx.author.mention} ${conf.daily_amount} has been added to your wallet.")
     
@@ -108,12 +143,12 @@ class Gamble(commands.Cog, name="Gamble"):
         """
         Transfer money to another member. First argument is user ID. Second argument is amount.
         """
-        self.db.check_user(ctx.author.id)
+        self.users.check_user(ctx.author.id)
 
         if amount <= 0:
             await ctx.send("You must enter a positive number greater than 0.", ephemeral=True)
             return
-        if amount > self.db.get_user_field("money", ctx.author.id):
+        if amount > self.users.get_field("money", ctx.author.id):
             await ctx.send("You don't have enough money.", ephemeral=True)
             return
 
@@ -121,10 +156,10 @@ class Gamble(commands.Cog, name="Gamble"):
             await ctx.send("User is not a valid user or not a member of this server.", ephemeral=True)
             return
         
-        self.db.check_user(user.id)
+        self.users.check_user(user.id)
         
-        self.db.set_user_field("money", -amount, ctx.author.id, commit_changes=False, add_value_instead=True)
-        self.db.set_user_field("money", amount, user.id, commit_changes=True, add_value_instead=True)
+        self.users.set_field("money", -amount, ctx.author.id, commit_changes=False, add_value_instead=True)
+        self.users.set_field("money", amount, user.id, commit_changes=True, add_value_instead=True)
 
         await ctx.send(f"Transferred ${amount} from {ctx.author.display_name} to {user.display_name}")
 
@@ -136,7 +171,7 @@ class Gamble(commands.Cog, name="Gamble"):
         # Poor man"s clamp.
         max_entries = max(1, min(max_entries, 50))
 
-        entries = self.db.get_money_leaderboard(max_entries)
+        entries = self.users.get_leaderboard(max_entries)
         
         member_list = ""
 
