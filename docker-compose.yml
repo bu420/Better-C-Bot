@@ -3,3 +3,7 @@ services:
     bot:
         build: .
         restart: unless-stopped
+        volumes:
+            - bot-persistent:/home/bettercbot/persistent
+volumes:
+    bot-persistent:

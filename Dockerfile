@@ -10,6 +10,7 @@ RUN apt update -y \
 RUN adduser --disabled-password --gecos "" bettercbot
 USER bettercbot
 WORKDIR /home/bettercbot
+RUN mkdir persistent
 ENV PATH="/home/bettercbot/.local/bin:$PATH"
 
 COPY --chown=bettercbot:bettercbot src/cppref src/cppref
