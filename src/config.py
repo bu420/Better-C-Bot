@@ -53,7 +53,7 @@ closeable = {
   1055500115432972318 : 'Done'  # code-review
 }
 
-database_path = "database.db"
+database_path = "persistent/database.db"
 
 daily_amount = 10
 
