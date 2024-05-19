@@ -4,6 +4,6 @@ services:
         build: .
         restart: unless-stopped
         volumes:
-            - bot-database:/home/bettercbot/database.sql
+            - bot-database:/home/bettercbot/database.db
 volumes:
     bot-database:
